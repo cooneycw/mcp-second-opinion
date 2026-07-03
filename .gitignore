@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environment / secrets - never commit real keys
+.env
+.env.*
+!.env.example
+
+# Rust build output (the sidecar is built in Docker; ignore any local target/)
+target/
+
+# OS / editor
+.DS_Store
+*.swp

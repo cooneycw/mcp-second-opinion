@@ -1,0 +1,19 @@
+# Gitleaks configuration for mcp-second-opinion
+#
+# Local scan (Docker):
+#   docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+#     detect --source=/repo --no-git --config=/repo/.gitleaks.toml
+
+[extend]
+useDefault = true
+
+[allowlist]
+  paths = [
+    '''\.venv/''',
+    '''__pycache__/''',
+    '''\.mypy_cache/''',
+    # Lock file - hashes, not secrets.
+    '''uv\.lock$''',
+    # Example env file ships obvious placeholders only (your-...-key-here).
+    '''\.env\.example$''',
+  ]

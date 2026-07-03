@@ -1,0 +1,102 @@
+# MCP Second Opinion - standalone MCP server + AWS Secrets Manager sidecar
+#
+# Two ways to run this server:
+#   1. Quick / local (no AWS): put your LLM keys in .env, then ./start-server.sh
+#      (see README "Quick start"). No sidecar, no Docker required.
+#   2. AWS Secrets Manager (this compose): keys live in AWS, none on disk. The
+#      aws-secrets-agent sidecar fetches them at runtime; the server pulls from
+#      the agent over the compose network with only an SSRF token.
+#
+# Required .env for this compose (AWS credentials only - never commit .env):
+#   AWS_ACCESS_KEY_ID=...
+#   AWS_SECRET_ACCESS_KEY=...
+#   AWS_TOKEN=...            # unique SSRF token for the secrets agent
+#   AWS_SECRET_NAME=...      # Secrets Manager secret holding the LLM keys
+#
+# Start:  docker compose up --build -d
+# Logs:   docker compose logs -f
+# Stop:   docker compose down
+
+services:
+  # AWS Secrets Manager Agent sidecar. Built from AWS's upstream source pinned by
+  # commit SHA in aws-secrets-agent/Dockerfile (no vendored code) plus two small
+  # patches so it is reachable across the compose network. Internal-only.
+  aws-secrets-agent:
+    build:
+      context: ./aws-secrets-agent
+    image: aws-secrets-agent:${IMAGE_TAG:-dev}
+    container_name: aws-secrets-agent
+    # Reachable on the compose network (http://aws-secrets-agent:2773) but never
+    # published to the host: a published port plus the SSRF token would let any
+    # local process pull allowed secrets.
+    expose:
+      - "2773"
+    env_file:
+      - path: .env
+        required: false
+    security_opt:
+      - no-new-privileges:true
+    # The agent is the ONLY service that receives AWS credentials. The server
+    # reaches it with just the SSRF token, keeping the blast radius minimal.
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - AWS_DEFAULT_REGION=${AWS_REGION:-us-east-1}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_TOKEN=${AWS_TOKEN:-default-token}
+    healthcheck:
+      # /ping is a local liveness probe: it does not call AWS or fetch secrets.
+      test: ["CMD", "curl", "-sf", "-H", "X-Aws-Parameters-Secrets-Token: ${AWS_TOKEN:-default-token}", "http://localhost:2773/ping"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+  # The Second Opinion MCP server (multi-model code review over Gemini / OpenAI /
+  # Anthropic). fetch-secrets.sh resolves LLM keys from the sidecar, then execs
+  # the server. Fails closed if a configured secret cannot be fetched.
+  second-opinion:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: mcp-second-opinion:${IMAGE_TAG:-dev}
+    container_name: mcp-second-opinion
+    ports:
+      - "${PORT_MAPPING:-8080:8080}"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - MCP_SERVER_HOST=0.0.0.0
+      - AWS_SECRET_NAME=${AWS_SECRET_NAME:-codex_llm_apikeys}
+      - SECRETS_AGENT_URL=http://aws-secrets-agent:2773
+      - AWS_TOKEN=${AWS_TOKEN:-default-token}
+      # Optional direct-key passthrough for runs with no live sidecar. When the
+      # sidecar is up it overrides these at runtime. /readyz needs at least one
+      # provider key present (from the sidecar or here).
+      - GEMINI_API_KEY
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+    entrypoint: ["/app/fetch-secrets.sh"]
+    command: ["python", "server.py"]
+    depends_on:
+      aws-secrets-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz')"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
