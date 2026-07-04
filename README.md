@@ -6,7 +6,8 @@ stuck.
 
 > Extracted from [claude-power-pack](https://github.com/cooneycw/claude-power-pack)
 > as a standalone, independently deployable service. Run it wherever you like and
-> point any MCP client at it (see "Connect a client" below).
+> point any MCP client at it (see "Connect a client" below). Architecture
+> decisions: [`docs/decisions/0001`](docs/decisions/0001-standalone-extraction-and-architecture.md).
 
 ## Two ways to run it
 
