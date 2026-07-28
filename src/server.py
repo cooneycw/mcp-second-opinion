@@ -389,8 +389,9 @@ async def _try_openai_model(prompt: str, model_name: str, max_tokens: int = Conf
     try:
         logger.info(f"Sending request to OpenAI {model_name}")
 
-        # Codex, GPT-5.5, o3, and o4-mini models use the Responses API
-        uses_responses_api = any(x in model_name.lower() for x in ["codex", "gpt-5.5", "o3", "o4-mini"])
+        # Codex, GPT-5.4/5.5, o3, and o4-mini models use the Responses API
+        # (gpt-5.5 kept for pass-through even though it is no longer a default)
+        uses_responses_api = any(x in model_name.lower() for x in ["codex", "gpt-5.4", "gpt-5.5", "o3", "o4-mini"])
 
         if uses_responses_api:
             # Use Responses API for Codex models
@@ -535,11 +536,12 @@ async def _try_anthropic_model(
         logger.info(f"Sending request to Anthropic {model_name}")
 
         result = ""
+        # No temperature: Claude 5 models (sonnet-5/opus-5) reject non-default
+        # sampling params with a 400; omitting it is valid on all Claude models.
         async with _anthropic_client.messages.stream(
             model=model_name,
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
-            temperature=Config.TEMPERATURE,
         ) as stream:
             async for text in stream.text_stream:
                 result += text
