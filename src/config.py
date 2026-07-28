@@ -89,17 +89,17 @@ class Config:
     GEMINI_API_KEY: Optional[str] = _gemini_api_key_secret.get_secret_value()
 
     # Model Selection Strategy
-    # Primary: Gemini 3.5 Flash (fastest, beats 3.1 Pro on coding/agent benchmarks)
-    # Fallback: Gemini 3.1 Pro Preview (stable, proven)
-    GEMINI_MODEL_PRIMARY: str = "gemini-3.5-flash"
+    # Primary: Gemini 3.6 Flash (replaced 3.5 Flash July 2026, 17% output price cut)
+    # Fallback: Gemini 3.1 Pro Preview (stable, proven; GA ID unverified - issue #3)
+    GEMINI_MODEL_PRIMARY: str = "gemini-3.6-flash"
     GEMINI_MODEL_FALLBACK: str = "gemini-3.1-pro-preview"
 
     # For image/visual analysis (e.g., Playwright screenshots)
     GEMINI_MODEL_IMAGE: str = "gemini-3-pro-image-preview"
 
-    # Gemini API Pricing (per million tokens) - Updated 2026-05
+    # Gemini API Pricing (per million tokens) - Updated 2026-07
     GEMINI_PRICING: Dict[str, Dict[str, float]] = {
-        "gemini-3.5-flash": {"input": 0.15, "output": 0.60},
+        "gemini-3.6-flash": {"input": 1.50, "output": 7.50},
         "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.00},
         "gemini-3-pro-image-preview": {"input": 2.50, "output": 10.00},
     }
@@ -110,10 +110,12 @@ class Config:
     # API key loaded at module level to avoid @classmethod @property issues in Python 3.14
     OPENAI_API_KEY: Optional[str] = _openai_api_key_secret.get_secret_value()
 
-    # OpenAI Models - Updated May 2026
-    # GPT-5.5 family (latest, replaces GPT-5.3 as default)
-    OPENAI_MODEL_GPT55: str = "gpt-5.5"
-    OPENAI_MODEL_GPT55_PRO: str = "gpt-5.5-pro"
+    # OpenAI Models - Updated July 2026
+    # GPT-5.4 family (default; gpt-5.5 retired: legacy pricing $5/$30 and stale
+    # config rates made it ~3x more expensive than tracked - issue #3. GPT-5.6
+    # deliberately avoided: open usage.output_tokens inflation bug on Sol/Terra)
+    OPENAI_MODEL_GPT54: str = "gpt-5.4"
+    OPENAI_MODEL_GPT54_MINI: str = "gpt-5.4-mini"
 
     # GPT-4o family (multimodal, fast)
     OPENAI_MODEL_GPT4O: str = "gpt-4o"
@@ -136,11 +138,11 @@ class Config:
     # Fallback
     OPENAI_MODEL_FALLBACK: str = "gpt-4o-mini"
 
-    # OpenAI API Pricing (per million tokens) - Updated 2026-05
+    # OpenAI API Pricing (per million tokens) - Updated 2026-07
     OPENAI_PRICING: Dict[str, Dict[str, float]] = {
-        # GPT-5.5 family
-        "gpt-5.5": {"input": 2.00, "output": 10.00},
-        "gpt-5.5-pro": {"input": 5.00, "output": 20.00},
+        # GPT-5.4 family
+        "gpt-5.4": {"input": 2.50, "output": 15.00},
+        "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
         # GPT-4o family
         "gpt-4o": {"input": 2.50, "output": 10.00},
         "gpt-4o-mini": {"input": 0.15, "output": 0.60},
@@ -161,18 +163,20 @@ class Config:
     # API key loaded at module level to avoid @classmethod @property issues in Python 3.14
     ANTHROPIC_API_KEY: Optional[str] = _anthropic_api_key_secret.get_secret_value()
 
-    # Anthropic Claude Models - Updated May 2026
-    ANTHROPIC_MODEL_SONNET: str = "claude-sonnet-4-6"
+    # Anthropic Claude Models - Updated July 2026 (Claude 5 family - issue #3)
+    ANTHROPIC_MODEL_SONNET: str = "claude-sonnet-5"
     ANTHROPIC_MODEL_HAIKU: str = "claude-haiku-4-5-20251001"
-    ANTHROPIC_MODEL_OPUS: str = "claude-opus-4-6"
+    ANTHROPIC_MODEL_OPUS: str = "claude-opus-5"
 
     # Fallback
     ANTHROPIC_MODEL_FALLBACK: str = "claude-haiku-4-5-20251001"
 
-    # Anthropic API Pricing (per million tokens) - Updated 2026-05
+    # Anthropic API Pricing (per million tokens) - Updated 2026-07
+    # Note: claude-sonnet-5 has intro pricing $2/$10 through 2026-08-31; the
+    # standard rate below is used so cost tracking never under-counts.
     ANTHROPIC_PRICING: Dict[str, Dict[str, float]] = {
-        "claude-opus-4-6": {"input": 5.00, "output": 25.00},
-        "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
+        "claude-opus-5": {"input": 5.00, "output": 25.00},
+        "claude-sonnet-5": {"input": 3.00, "output": 15.00},
         "claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00},
     }
 
@@ -182,11 +186,11 @@ class Config:
     # All models available for second opinion consultation
     AVAILABLE_MODELS: Dict[str, Dict[str, Any]] = {
         # Gemini models
-        "gemini-3.5-flash": {
+        "gemini-flash": {
             "provider": "gemini",
-            "model_id": "gemini-3.5-flash",
-            "display_name": "Gemini 3.5 Flash",
-            "description": "Google's fastest, 4x output speed, beats 3.1 Pro on coding/agent",
+            "model_id": "gemini-3.6-flash",
+            "display_name": "Gemini 3.6 Flash",
+            "description": "Google's fast default; replaced 3.5 Flash July 2026",
             "free": False,
         },
         "gemini-3-pro": {
@@ -199,9 +203,9 @@ class Config:
         # Anthropic Claude models
         "claude-sonnet": {
             "provider": "anthropic",
-            "model_id": "claude-sonnet-4-6",
-            "display_name": "Claude Sonnet 4.6",
-            "description": "Fast, excellent for code review and analysis",
+            "model_id": "claude-sonnet-5",
+            "display_name": "Claude Sonnet 5",
+            "description": "Near-Opus coding quality at Sonnet cost; excellent for code review",
             "free": False,
         },
         "claude-haiku": {
@@ -213,24 +217,24 @@ class Config:
         },
         "claude-opus": {
             "provider": "anthropic",
-            "model_id": "claude-opus-4-6",
-            "display_name": "Claude Opus 4.6",
-            "description": "Most capable Claude, 1M context, improved agentic coding",
+            "model_id": "claude-opus-5",
+            "display_name": "Claude Opus 5",
+            "description": "Most capable Claude at Opus-tier price, 1M context",
             "free": False,
         },
-        # OpenAI GPT-5.5 family
-        "gpt-5.5": {
+        # OpenAI GPT-5.4 family (gpt-5.5 retired - legacy $5/$30 pricing, issue #3)
+        "gpt-5.4": {
             "provider": "openai",
-            "model_id": "gpt-5.5",
-            "display_name": "GPT-5.5",
-            "description": "Latest GPT model, replaces GPT-5.3 as default",
+            "model_id": "gpt-5.4",
+            "display_name": "GPT-5.4",
+            "description": "Default OpenAI model; stable billing, half the cost of gpt-5.5",
             "free": False,
         },
-        "gpt-5.5-pro": {
+        "gpt-5.4-mini": {
             "provider": "openai",
-            "model_id": "gpt-5.5-pro",
-            "display_name": "GPT-5.5 Pro",
-            "description": "Most capable OpenAI model, best for complex tasks",
+            "model_id": "gpt-5.4-mini",
+            "display_name": "GPT-5.4 Mini",
+            "description": "Cost-effective GPT-5.4 variant, good for fan-out reviews",
             "free": False,
         },
         # OpenAI GPT-4o family
