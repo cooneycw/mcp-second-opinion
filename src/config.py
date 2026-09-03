@@ -189,7 +189,7 @@ class Config:
     # Ollama Local Provider Configuration (keyless)
     # ==========================================================================
     # Base URL of an OpenAI-compatible Ollama server. Defaults to the local
-    # machine; point it at a LAN/Tailscale host (e.g. http://100.77.116.54:11434)
+    # machine; point it at a LAN/Tailscale host (e.g. http://<serving-host>:11434)
     # to consume a model served elsewhere. Empty string disables the provider.
     OLLAMA_BASE_URL: str = _ollama_base_url
 
