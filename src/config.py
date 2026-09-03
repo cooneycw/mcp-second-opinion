@@ -78,6 +78,11 @@ _gemini_api_key_secret = _SecretStr(os.getenv("GEMINI_API_KEY"))
 _openai_api_key_secret = _SecretStr(os.getenv("OPENAI_API_KEY"))
 _anthropic_api_key_secret = _SecretStr(os.getenv("ANTHROPIC_API_KEY"))
 
+# Ollama local provider (keyless). Loaded at module level so the class body
+# can reference the resolved model id inside AVAILABLE_MODELS.
+_ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+_ollama_model = os.getenv("OLLAMA_MODEL", "qwen3.8-code:latest")
+
 
 class Config:
     """Configuration settings for the MCP server."""
@@ -178,6 +183,22 @@ class Config:
         "claude-opus-5": {"input": 5.00, "output": 25.00},
         "claude-sonnet-5": {"input": 3.00, "output": 15.00},
         "claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00},
+    }
+
+    # ==========================================================================
+    # Ollama Local Provider Configuration (keyless)
+    # ==========================================================================
+    # Base URL of an OpenAI-compatible Ollama server. Defaults to the local
+    # machine; point it at a LAN/Tailscale host (e.g. http://100.77.116.54:11434)
+    # to consume a model served elsewhere. Empty string disables the provider.
+    OLLAMA_BASE_URL: str = _ollama_base_url
+
+    # Model tag served by that Ollama instance.
+    OLLAMA_MODEL: str = _ollama_model
+
+    # Local inference is free; keyed by model id for get_pricing() lookup.
+    OLLAMA_PRICING: Dict[str, Dict[str, float]] = {
+        _ollama_model: {"input": 0.0, "output": 0.0},
     }
 
     # ==========================================================================
@@ -297,15 +318,38 @@ class Config:
             "description": "Cost-effective GPT-5.2 variant",
             "free": False,
         },
+        # Local Ollama-served model (keyless, zero cost)
+        "qwen-local": {
+            "provider": "ollama",
+            "model_id": _ollama_model,
+            "display_name": "Qwen (local)",
+            "description": "Locally hosted Qwen via Ollama - free, private, always consulted by default",
+            "free": True,
+            # Bound runaway local generation (~17 tok/s hardware): 8K output
+            # keeps a single opinion under the MODEL_RESPONSE_TIMEOUT ceiling.
+            "max_output_tokens": 8192,
+        },
     }
 
     # Default models to use when none specified
     # Strong cross-provider fan-out across the reliable providers (Gemini/OpenAI)
+    # plus the free local model.
     DEFAULT_MODELS: List[str] = [
         "gemini-3-pro",
         "gpt-5.2",
         "codex",
         "o4-mini",
+        "qwen-local",
+    ]
+
+    # Always-on opinions: model keys merged into EVERY consultation, even when
+    # the caller specifies an explicit model list. Comma-separated env override;
+    # set ALWAYS_CONSULT_MODELS="" to disable. Unavailable entries are dropped
+    # by the same availability filter as requested models.
+    ALWAYS_CONSULT_MODELS: List[str] = [
+        m.strip()
+        for m in os.getenv("ALWAYS_CONSULT_MODELS", "qwen-local").split(",")
+        if m.strip()
     ]
 
     # Token estimation (characters per token approximation)
@@ -350,7 +394,7 @@ class Config:
 
     # Server Configuration
     SERVER_NAME: str = "second-opinion-server"
-    SERVER_VERSION: str = "2.2.0"  # Model catalog update May 2026
+    SERVER_VERSION: str = "2.3.0"  # Local Ollama provider + always-consult models
 
     # HTTP/SSE Transport Configuration (with safe parsing)
     SERVER_HOST: str = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
@@ -422,11 +466,14 @@ class Config:
     # Block internal/private networks (critical SSRF protection - never bypassed)
     FETCH_URL_BLOCK_PRIVATE: bool = True
 
-    # Provider API key map for dynamic availability checks
+    # Provider API key map for dynamic availability checks.
+    # "ollama" is keyless: its availability gate is a non-empty OLLAMA_BASE_URL,
+    # which satisfies the same truthiness check as an API key.
     _PROVIDER_API_KEY_MAP: Dict[str, str] = {
         "gemini": "GEMINI_API_KEY",
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
+        "ollama": "OLLAMA_BASE_URL",
     }
 
     @classmethod
@@ -477,6 +524,7 @@ class Config:
             cls.GEMINI_PRICING,
             cls.OPENAI_PRICING,
             cls.ANTHROPIC_PRICING,
+            cls.OLLAMA_PRICING,
         ]:
             if model_id in pricing_table:
                 return pricing_table[model_id]
