@@ -10,6 +10,7 @@ Supports multi-model consultation for comparing responses from different LLMs.
 import argparse
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta
 from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
@@ -118,6 +119,18 @@ if Config.ANTHROPIC_API_KEY:
     logger.info("Anthropic API configured successfully")
 else:
     logger.warning("ANTHROPIC_API_KEY not set - Claude models will be unavailable")
+
+# Configure Ollama (keyless local provider; the OpenAI SDK speaks to the
+# server's OpenAI-compatible /v1 endpoint, api_key is a required placeholder)
+_ollama_client: Optional[openai.AsyncOpenAI] = None
+if Config.OLLAMA_BASE_URL:
+    _ollama_client = openai.AsyncOpenAI(
+        base_url=f"{Config.OLLAMA_BASE_URL.rstrip('/')}/v1",
+        api_key="ollama",
+    )
+    logger.info(f"Ollama local provider configured ({Config.OLLAMA_BASE_URL})")
+else:
+    logger.warning("OLLAMA_BASE_URL empty - local Qwen model will be unavailable")
 
 # Lock for thread-safe operations
 _model_lock: asyncio.Lock = asyncio.Lock()
@@ -560,6 +573,44 @@ async def _try_anthropic_model(
 # =============================================================================
 
 
+async def get_ollama_response(
+    prompt: str,
+    model_name: str,
+    max_tokens: int = Config.MAX_TOKENS,
+) -> tuple[str, str]:
+    """
+    Get streaming response from the local Ollama server (OpenAI-compatible API).
+
+    Keyless and zero-cost. No fallback model: there is exactly one local model,
+    so failure should surface immediately rather than silently rerouting to a
+    paid provider. Inline <think> blocks from hybrid reasoning models (Qwen3.x)
+    are stripped so the opinion text stays comparable to other providers.
+
+    Returns:
+        Tuple of (response text, model used)
+    """
+    if not _ollama_client:
+        raise ValueError("Ollama provider not configured (OLLAMA_BASE_URL is empty)")
+
+    logger.info(f"Sending request to local Ollama model {model_name}")
+    response = await _ollama_client.chat.completions.create(
+        model=model_name,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=Config.TEMPERATURE,
+        top_p=Config.TOP_P,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+
+    full_response = []
+    async for chunk in response:
+        if chunk.choices and chunk.choices[0].delta.content:
+            full_response.append(chunk.choices[0].delta.content)
+
+    text = re.sub(r"<think>.*?</think>", "", "".join(full_response), flags=re.DOTALL).strip()
+    return text, model_name
+
+
 class _UnknownProviderError(Exception):
     """Raised inside the dispatch coroutine for an unroutable provider.
 
@@ -634,6 +685,10 @@ async def get_single_model_response(
                 )
             elif provider == "anthropic":
                 return await get_anthropic_response(
+                    prompt, model_id, max_tokens=effective_max_tokens,
+                )
+            elif provider == "ollama":
+                return await get_ollama_response(
                     prompt, model_id, max_tokens=effective_max_tokens,
                 )
             raise _UnknownProviderError(provider)
@@ -716,6 +771,13 @@ async def get_multi_model_responses(
     """
     if not model_keys:
         model_keys = Config.DEFAULT_MODELS
+
+    # Always-on opinions (e.g., the local Qwen model): merged into every
+    # consultation even when the caller named an explicit model list. The
+    # availability filter below drops any that cannot actually be served.
+    for extra_key in Config.ALWAYS_CONSULT_MODELS:
+        if extra_key not in model_keys:
+            model_keys = [*model_keys, extra_key]
 
     # Filter to only available models
     available_keys = Config.get_available_model_keys()
@@ -1055,6 +1117,42 @@ async def get_code_second_opinion(
         output_cost = (output_tokens / 1_000_000) * pricing["output"]
         total_cost = input_cost + output_cost
 
+        # Always-on opinions (ALWAYS_CONSULT_MODELS, e.g. the local Qwen
+        # model): consulted in parallel with the same review prompt and
+        # appended as an additive field, so the primary analysis contract is
+        # unchanged. Failures degrade to an error entry, never block the
+        # primary review.
+        additional_opinions: List[Dict[str, Any]] = []
+        extra_keys = [
+            k for k in Config.ALWAYS_CONSULT_MODELS
+            if k in Config.get_available_model_keys()
+        ]
+        if extra_keys:
+            extra_results = await asyncio.gather(
+                *(
+                    get_single_model_response(prompt, k, max_tokens=max_tokens)
+                    for k in extra_keys
+                ),
+                return_exceptions=True,
+            )
+            for key, extra in zip(extra_keys, extra_results):
+                if isinstance(extra, Exception):
+                    additional_opinions.append({
+                        "model_key": key,
+                        "success": False,
+                        "error": str(extra),
+                    })
+                    continue
+                additional_opinions.append({
+                    "model_key": key,
+                    "model_id": extra.get("model_id"),
+                    "display_name": extra.get("display_name"),
+                    "success": extra.get("success", False),
+                    "opinion": extra.get("response", ""),
+                    "error": extra.get("error"),
+                })
+                total_cost += extra.get("cost", 0.0)
+
         return {
             "analysis": analysis,
             "model_used": model_used,
@@ -1065,6 +1163,7 @@ async def get_code_second_opinion(
                 "total": total_tokens,
             },
             "cost_estimate": round(total_cost, 5),
+            "additional_opinions": additional_opinions,
             "error": None,
         }
 
@@ -1119,9 +1218,16 @@ async def health_check() -> dict:
             "haiku": Config.ANTHROPIC_MODEL_HAIKU,
             "opus": Config.ANTHROPIC_MODEL_OPUS,
         } if has_anthropic else None,
+        # Ollama local provider (keyless)
+        "ollama_configured": bool(Config.OLLAMA_BASE_URL),
+        "ollama_models": {
+            "base_url": Config.OLLAMA_BASE_URL,
+            "model": Config.OLLAMA_MODEL,
+        } if Config.OLLAMA_BASE_URL else None,
         # Available models for multi-model consultation
         "available_models": available_models,
         "default_models": Config.DEFAULT_MODELS,
+        "always_consult_models": Config.ALWAYS_CONSULT_MODELS,
     }
 
     _key_info = {
